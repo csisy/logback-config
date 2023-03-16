@@ -12,7 +12,7 @@ import java.util.Map;
  *
  * @author NiceBKB
  */
-public class ConfigAppendersCache {
+class ConfigAppendersCache {
 	/**
 	 * The map of appender names to loaded appender objects
 	 */

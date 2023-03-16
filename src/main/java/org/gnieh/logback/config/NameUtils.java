@@ -19,7 +19,7 @@ package org.gnieh.logback.config;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class NameUtils {
+class NameUtils {
 
 	private NameUtils() {
 	}

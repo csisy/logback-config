@@ -1,14 +1,3 @@
-*.class
-
-# Package Files #
-*.jar
-*.war
-*.ear
-
-.settings/
-target/
-logs/
-project/target
-project/project
-.project
-.classpath
+.gradle/
+.idea/
+build/

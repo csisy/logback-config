@@ -1,5 +1,17 @@
 package org.gnieh.logback.config;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.Appender;
+import ch.qos.logback.core.Context;
+import ch.qos.logback.core.CoreConstants;
+import ch.qos.logback.core.joran.util.beans.BeanDescription;
+import ch.qos.logback.core.joran.util.beans.BeanDescriptionCache;
+import ch.qos.logback.core.spi.ContextAwareBase;
+import ch.qos.logback.core.subst.NodeToStringTransformer;
+import ch.qos.logback.core.util.PropertySetterException;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigMemorySize;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.Charset;
@@ -8,19 +20,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.Appender;
-import ch.qos.logback.core.subst.NodeToStringTransformer;
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigMemorySize;
-
-import ch.qos.logback.core.Context;
-import ch.qos.logback.core.CoreConstants;
-import ch.qos.logback.core.joran.util.beans.BeanDescription;
-import ch.qos.logback.core.joran.util.beans.BeanDescriptionCache;
-import ch.qos.logback.core.spi.ContextAwareBase;
-import ch.qos.logback.core.util.PropertySetterException;
 
 /**
  * General purpose Object property setter for setting properties via a
@@ -196,15 +195,15 @@ public class ConfigPropertySetter extends ContextAwareBase {
 			if (String.class.isAssignableFrom(type)) {
 				arg = NodeToStringTransformer.substituteVariable(config.getString(name), context, null);
 			} else if (Integer.TYPE.isAssignableFrom(type)) {
-				arg = new Integer(config.getInt(name));
+				arg = config.getInt(name);
 			} else if (Long.TYPE.isAssignableFrom(type)) {
-				arg = new Long(config.getLong(name));
+				arg = config.getLong(name);
 			} else if (Float.TYPE.isAssignableFrom(type)) {
-				arg = new Float(config.getDouble(name));
+				arg = config.getDouble(name);
 			} else if (Double.TYPE.isAssignableFrom(type)) {
-				arg = new Double(config.getDouble(name));
+				arg = config.getDouble(name);
 			} else if (Boolean.TYPE.isAssignableFrom(type)) {
-				arg = new Boolean(config.getBoolean(name));
+				arg = config.getBoolean(name);
 			} else if (Config.class.isAssignableFrom(type)) {
 				arg = config.getConfig(name);
 			} else if (Duration.class.isAssignableFrom(type)) {

@@ -16,45 +16,29 @@
  */
 package org.gnieh.logback.config;
 
-import java.io.File;
-import java.lang.management.ManagementFactory;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.ServiceLoader;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
-import com.typesafe.config.ConfigObject;
-import com.typesafe.config.ConfigValue;
-import com.typesafe.config.ConfigValueType;
-
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.jmx.JMXConfigurator;
-import ch.qos.logback.classic.jmx.MBeanUtil;
 import ch.qos.logback.classic.spi.Configurator;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.CoreConstants;
 import ch.qos.logback.core.FileAppender;
 import ch.qos.logback.core.joran.spi.ConfigurationWatchList;
-import ch.qos.logback.core.joran.util.beans.BeanDescriptionCache;
 import ch.qos.logback.core.joran.util.ConfigurationWatchListUtil;
+import ch.qos.logback.core.joran.util.beans.BeanDescriptionCache;
 import ch.qos.logback.core.rolling.RollingPolicy;
 import ch.qos.logback.core.spi.ContextAwareBase;
 import ch.qos.logback.core.spi.LifeCycle;
+import com.typesafe.config.*;
 
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
+import java.io.File;
+import java.net.URL;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.TimeUnit;
+
+import static ch.qos.logback.classic.spi.Configurator.ExecutionStatus.NEUTRAL;
 
 /**
  * A configurator using Typesafe's config library to lookup and load logger
@@ -65,7 +49,7 @@ import javax.management.ObjectName;
 public class ConfigConfigurator extends ContextAwareBase implements Configurator {
 
     @Override
-    public void configure(LoggerContext loggerContext) {
+    public ExecutionStatus configure(LoggerContext loggerContext) {
 
         this.setContext(loggerContext);
 
@@ -78,7 +62,7 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
             config = loader.load();
         } catch (Throwable t) {
             addError("Unable to load Typesafe config", t);
-            return;
+            return NEUTRAL;
         }
 
         // get the logback configuration root
@@ -120,49 +104,14 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
             }
         }
 
-        if (logbackConfig.hasPath("jmx-configurator")) {
-            final Config jmxConfig = logbackConfig.getConfig("jmx-configurator");
-            final String contextName;
-            if (jmxConfig.hasPath("context-name")) {
-                contextName = jmxConfig.getString("context-name");
-            } else {
-                contextName = loggerContext.getName();
-            }
-
-            final String objectNameAsStr;
-            if (jmxConfig.hasPath("object-name")) {
-                objectNameAsStr = jmxConfig.getString("object-name");
-            } else {
-                objectNameAsStr = MBeanUtil.getObjectNameFor(contextName, JMXConfigurator.class);
-            }
-
-            ObjectName objectName = MBeanUtil.string2ObjectName(loggerContext, this, objectNameAsStr);
-            if (objectName == null) {
-                addError("Failed construct ObjectName for [" + objectNameAsStr + "]");
-                return;
-            }
-
-            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
-            if (!MBeanUtil.isRegistered(mbs, objectName)) {
-                // register only of the named JMXConfigurator has not been previously
-                // registered. Unregistering an MBean within invocation of itself
-                // caused jconsole to throw an NPE. (This occurs when the reload* method
-                // unregisters the
-                JMXConfigurator jmxConfigurator = new JMXConfigurator(loggerContext, mbs, objectName);
-                try {
-                    mbs.registerMBean(jmxConfigurator, objectName);
-                } catch (Exception e) {
-                    addError("Failed to create mbean", e);
-                }
-            }
-        }
-
         // Use a LinkedHashSet so order is preserved. We use the first one in as the 'main' URL, under the assumption
         // that maybe that matters somehow to logback. The way we traverse the config tree means that the first one we
         // add will be one that is closer to the root of the tree.
         if (registerFileWatchers(loggerContext, getSourceFiles(config.root(), new LinkedHashSet<>()))) {
             createChangeTask(loggerContext, logbackConfig);
         }
+
+        return NEUTRAL;
     }
 
     /**
@@ -312,12 +261,9 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
      *
      * @return the set of files found, as URLs
      */
-    private Set<URL> getSourceFiles(ConfigValue config, Set<URL> files) {
+    private Set<URL> getSourceFiles(ConfigValue config, LinkedHashSet<URL> files) {
         if (config.origin().filename() != null) {
-            // Check 'contains' first to avoid re-adding, and messing with the order
-            if (!files.contains(config.origin().url())) {
-                files.add(config.origin().url());
-            }
+            files.add(config.origin().url());
         }
         if (config.valueType() == ConfigValueType.OBJECT) {
             for (ConfigValue value : ((ConfigObject)config).values()) {
