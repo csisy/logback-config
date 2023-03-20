@@ -24,5 +24,13 @@ import com.typesafe.config.Config;
  */
 @FunctionalInterface
 public interface ConfigLoader {
+
     Config load() throws Exception;
+
+    /**
+     * @return false if this should be the only way to configure logging (default false)
+     */
+    default boolean allowOtherLoaders() {
+        return false;
+    }
 }

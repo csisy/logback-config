@@ -22,22 +22,23 @@ import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.Configurator;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
-import ch.qos.logback.core.CoreConstants;
 import ch.qos.logback.core.FileAppender;
-import ch.qos.logback.core.joran.spi.ConfigurationWatchList;
 import ch.qos.logback.core.joran.util.ConfigurationWatchListUtil;
 import ch.qos.logback.core.joran.util.beans.BeanDescriptionCache;
 import ch.qos.logback.core.rolling.RollingPolicy;
+import ch.qos.logback.core.spi.ConfigurationEvent;
 import ch.qos.logback.core.spi.ContextAwareBase;
 import ch.qos.logback.core.spi.LifeCycle;
-import com.typesafe.config.*;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+import com.typesafe.config.ConfigObject;
+import com.typesafe.config.ConfigValue;
 
-import java.io.File;
 import java.net.URL;
 import java.util.*;
-import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 
+import static ch.qos.logback.classic.spi.Configurator.ExecutionStatus.DO_NOT_INVOKE_NEXT_IF_ANY;
 import static ch.qos.logback.classic.spi.Configurator.ExecutionStatus.NEUTRAL;
 
 /**
@@ -53,11 +54,10 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
 
         this.setContext(loggerContext);
 
-        BeanDescriptionCache beanCache = new BeanDescriptionCache(loggerContext);
+        final var beanCache = new BeanDescriptionCache(loggerContext);
 
-
-        ConfigLoader loader = getLoader();
-        Config config;
+        final var loader = getLoader();
+        final Config config;
         try {
             config = loader.load();
         } catch (Throwable t) {
@@ -66,43 +66,42 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
         }
 
         // get the logback configuration root
-        final String logbackConfigRoot = config.getString("logback-root");
-        // load the configuration per config loading rules
-        final Config logbackConfig = config.getConfig(logbackConfigRoot);
+        final var logbackConfigRoot = config.getString("logback-root");
+        final var logbackConfig = config.getConfig(logbackConfigRoot);
+        final var appenderConfigs = logbackConfig.getConfig("appenders");
 
-        final Config appenderConfigs = logbackConfig.getConfig("appenders");
-        final ConfigAppendersCache appendersCache = new ConfigAppendersCache();
+        final var appendersCache = new ConfigAppendersCache();
         appendersCache.setLoader(name -> configureAppender(loggerContext, name, appenderConfigs.getConfig("\"" + name + "\""), beanCache, appendersCache));
+
         final Map<String, Appender<ILoggingEvent>> appenders = new HashMap<>();
-        for (Entry<String, ConfigValue> entry : appenderConfigs.root().entrySet()) {
-            if (entry.getValue() instanceof ConfigObject) {
+        appenderConfigs.root().forEach((key, value) -> {
+            if (value instanceof ConfigObject) {
                 try {
-                    appenders.put(entry.getKey(), appendersCache.getAppender(entry.getKey()));
+                    appenders.put(key, appendersCache.getAppender(key));
                 } catch (Exception e) {
-                    addError(String.format("Unable to configure appender %s.", entry.getKey()), e);
+                    addError(String.format("Unable to configure appender %s.", key), e);
                 }
             } else {
-                addWarn(String.format("Invalid appender configuration %s. Ignoring it.", entry.getKey()));
+                addWarn(String.format("Invalid appender configuration %s. Ignoring it.", key));
             }
-        }
+        });
 
         if (logbackConfig.hasPath("root")) {
-            if (logbackConfig.getValue("root") instanceof ConfigObject) {
-                configureLogger(loggerContext, appenders, Logger.ROOT_LOGGER_NAME, logbackConfig.getConfig("root"), true);
+            if (logbackConfig.getValue("root") instanceof ConfigObject configObject) {
+                configureLogger(loggerContext, appenders, Logger.ROOT_LOGGER_NAME, configObject.toConfig());
             } else {
                 addWarn("Invalid ROOT logger configuration. Ignoring it.");
             }
         }
 
-        Config loggerConfigs = logbackConfig.getConfig("loggers");
-        for (Entry<String, ConfigValue> entry : loggerConfigs.root().entrySet()) {
-            if (entry.getValue() instanceof ConfigObject) {
-                configureLogger(loggerContext, appenders, entry.getKey(),
-                        loggerConfigs.getConfig("\"" + entry.getKey() + "\""), false);
+        final var loggerConfigs = logbackConfig.getConfig("loggers");
+        loggerConfigs.root().forEach((key, value) -> {
+            if (value instanceof ConfigObject configObject) {
+                configureLogger(loggerContext, appenders, key, configObject.toConfig());
             } else {
-                addWarn(String.format("Invalid logger configuration %s. Ignoring it.", entry.getKey()));
+                addWarn(String.format("Invalid logger configuration %s. Ignoring it.", key));
             }
-        }
+        });
 
         // Use a LinkedHashSet so order is preserved. We use the first one in as the 'main' URL, under the assumption
         // that maybe that matters somehow to logback. The way we traverse the config tree means that the first one we
@@ -111,7 +110,7 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
             createChangeTask(loggerContext, logbackConfig);
         }
 
-        return NEUTRAL;
+        return loader.allowOtherLoaders() ? NEUTRAL : DO_NOT_INVOKE_NEXT_IF_ANY;
     }
 
     /**
@@ -120,7 +119,7 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
      * @return the config factory
      */
     private ConfigLoader getLoader() {
-        Iterator<ConfigLoader> loaders = ServiceLoader.load(ConfigLoader.class).iterator();
+        final var loaders = ServiceLoader.load(ConfigLoader.class).iterator();
         if (loaders.hasNext()) {
             return loaders.next();
         }
@@ -138,23 +137,22 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
 
     private Appender<ILoggingEvent> configureAppender(LoggerContext loggerContext, String name, Config config,
                                                       BeanDescriptionCache beanCache, ConfigAppendersCache appendersCache) throws ReflectiveOperationException {
-        List<Object> children = new ArrayList<>();
+        final List<Object> children = new ArrayList<>();
 
         @SuppressWarnings("unchecked")
-        Class<Appender<ILoggingEvent>> clazz = (Class<Appender<ILoggingEvent>>) Class
-                .forName(config.getString("class"));
+        final var clazz = (Class<Appender<ILoggingEvent>>) Class.forName(config.getString("class"));
 
-        Appender<ILoggingEvent> appender = this.configureObject(loggerContext, clazz, config, children, beanCache, appendersCache);
+        final var appender = this.configureObject(loggerContext, clazz, config, children, beanCache, appendersCache);
         appender.setName(name);
 
-        for (Object child : children) {
-            if (child instanceof RollingPolicy) {
-                ((RollingPolicy) child).setParent((FileAppender<?>) appender);
+        children.forEach(child -> {
+            if (child instanceof RollingPolicy rollingPolicy) {
+                rollingPolicy.setParent((FileAppender<?>) appender);
             }
-            if (child instanceof LifeCycle) {
-                ((LifeCycle) child).start();
+            if (child instanceof LifeCycle lifeCycle) {
+                lifeCycle.start();
             }
-        }
+        });
 
         appender.start();
         return appender;
@@ -180,12 +178,14 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
      */
     private <T> T configureObject(LoggerContext loggerContext, Class<T> clazz, Config config, List<Object> children,
                                   BeanDescriptionCache beanCache, ConfigAppendersCache appendersCache) throws ReflectiveOperationException {
-        T object = clazz.newInstance();
+        final var ctor = clazz.getConstructor();
+        final var object = ctor.newInstance();
 
-        if (object instanceof ContextAwareBase)
-            ((ContextAwareBase) object).setContext(loggerContext);
+        if (object instanceof ContextAwareBase contextAware) {
+            contextAware.setContext(loggerContext);
+        }
 
-        ConfigPropertySetter propertySetter = new ConfigPropertySetter(beanCache, object);
+        final var propertySetter = new ConfigPropertySetter(beanCache, object);
         propertySetter.setContext(loggerContext);
 
         // file property (if any) must be set before any other property for appenders
@@ -193,45 +193,48 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
             propertySetter.setProperty("file", config, loggerContext, appendersCache);
         }
 
-        for (Entry<String, ConfigValue> entry : config.withoutPath("class").withoutPath("file").root().entrySet()) {
-            ConfigValue value = entry.getValue();
-            switch (value.valueType()) {
-                case OBJECT:
-                    Config subConfig = config.getConfig("\"" + entry.getKey() + "\"");
-                    if (subConfig.hasPath("class")) {
-                        Class<?> childClass = Class.forName(subConfig.getString("class"));
-                        Object child = this.configureObject(loggerContext, childClass, subConfig, null, beanCache, appendersCache);
-                        String propertyName = NameUtils.toLowerCamelCase(entry.getKey());
-                        propertySetter.setRawProperty(propertyName, child);
-                        if (children != null)
+        config.withoutPath("class").withoutPath("file").root().forEach((key, value) -> {
+            if (value instanceof ConfigObject configObject) {
+                final var subConfig = configObject.toConfig();
+
+                if (subConfig.hasPath("class")) {
+                    try {
+                        final var childClass = Class.forName(subConfig.getString("class"));
+                        final var child = this.configureObject(loggerContext, childClass, subConfig, null, beanCache, appendersCache);
+
+                        propertySetter.setRawProperty(NameUtils.toLowerCamelCase(key), child);
+                        if (children != null) {
                             children.add(child);
-                    } else {
-                        propertySetter.setProperty(entry.getKey(), config, loggerContext, appendersCache);
+                        }
+                    } catch (ReflectiveOperationException e) {
+                        throw new RuntimeException("Unable to configure object", e);
                     }
-                    break;
-                default:
-                    propertySetter.setProperty(entry.getKey(), config, loggerContext, appendersCache);
-                    break;
+                } else {
+                    propertySetter.setProperty(key, config, loggerContext, appendersCache);
+                }
+            } else {
+                propertySetter.setProperty(key, config, loggerContext, appendersCache);
             }
-        }
+        });
 
         return object;
     }
 
-    private void configureLogger(LoggerContext loggerContext, Map<String, Appender<ILoggingEvent>> appenders,
-                                 String name, Config config, boolean isRoot) {
-        final Logger logger = loggerContext.getLogger(name);
+    private void configureLogger(LoggerContext loggerContext, Map<String, Appender<ILoggingEvent>> appenders, String name, Config config) {
+        final var logger = loggerContext.getLogger(name);
+        final var isRoot = Logger.ROOT_LOGGER_NAME.equals(logger.getName());
 
         if (config.hasPathOrNull("level")) {
-            if (config.getIsNull("level") && isRoot) {
-                addWarn("Log level NULL is not authorized for ROOT logger");
-            } else if (!config.getIsNull("level")) {
-                String levelName = config.getString("level");
-                if (isRoot && (levelName.equalsIgnoreCase("NULL") || levelName.equalsIgnoreCase("INHERITED"))) {
-                    addWarn(String.format("Log level %s is not authorized for ROOT logger.", levelName.toUpperCase()));
-                } else if (!levelName.equalsIgnoreCase("NULL") && !levelName.equalsIgnoreCase("INHERITED")) {
+            if (!config.getIsNull("level")) {
+                final var levelName = config.getString("level");
+
+                if (!levelName.equalsIgnoreCase("NULL") && !levelName.equalsIgnoreCase("INHERITED")) {
                     logger.setLevel(Level.toLevel(config.getString("level")));
+                } else if (isRoot) {
+                    addWarn(String.format("Log level %s is not authorized for ROOT logger.", levelName.toUpperCase()));
                 }
+            } else if (isRoot) {
+                addWarn("Log level NULL is not authorized for ROOT logger");
             }
         }
 
@@ -240,14 +243,13 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
         }
 
         if (config.hasPath("appenders")) {
-            List<String> appenderRefs = config.getStringList("appenders");
-            for (String appenderRef : appenderRefs) {
+            config.getStringList("appenders").forEach(appenderRef -> {
                 if (appenders.containsKey(appenderRef)) {
                     logger.addAppender(appenders.get(appenderRef));
                 } else {
                     addWarn(String.format("Unknown appender %s. Ignoring it.", appenderRef));
                 }
-            }
+            });
         }
 
     }
@@ -265,10 +267,8 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
         if (config.origin().filename() != null) {
             files.add(config.origin().url());
         }
-        if (config.valueType() == ConfigValueType.OBJECT) {
-            for (ConfigValue value : ((ConfigObject)config).values()) {
-                getSourceFiles(value, files);
-            }
+        if (config instanceof ConfigObject configObject) {
+            configObject.values().forEach(value -> getSourceFiles(value, files));
         }
         return files;
     }
@@ -282,7 +282,7 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
      * @return true if there were any files to watch
      */
     private boolean registerFileWatchers(LoggerContext loggerContext, Set<URL> sourceFiles) {
-        Iterator<URL> iterator = sourceFiles.iterator();
+        final var iterator = sourceFiles.iterator();
         if (iterator.hasNext()) {
             ConfigurationWatchListUtil.setMainWatchURL(loggerContext, iterator.next());
             iterator.forEachRemaining(u -> {
@@ -306,14 +306,13 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
         if (config.hasPath("scan-period") && !config.getIsNull("scan-period")) {
             long delay = config.getDuration("scan-period", TimeUnit.MILLISECONDS);
             if (delay > 0) {
-                Runnable rocTask = () -> {
-                    ConfigurationWatchList configurationWatchList =
-                            ConfigurationWatchListUtil.getConfigurationWatchList(loggerContext);
+                final Runnable rocTask = () -> {
+                    final var configurationWatchList = ConfigurationWatchListUtil.getConfigurationWatchList(loggerContext);
                     if (configurationWatchList == null) {
                         addWarn("Null ConfigurationWatchList in context");
                         return;
                     }
-                    List<File> filesToWatch = configurationWatchList.getCopyOfFileWatchList();
+                    final var filesToWatch = configurationWatchList.getCopyOfFileWatchList();
                     if (filesToWatch == null || filesToWatch.isEmpty()) {
                         addInfo("Empty watch file list. Disabling ");
                         return;
@@ -325,9 +324,10 @@ public class ConfigConfigurator extends ContextAwareBase implements Configurator
                     configure(loggerContext);
                 };
 
-                loggerContext.putObject(CoreConstants.RECONFIGURE_ON_CHANGE_TASK, rocTask);
-                loggerContext.addScheduledFuture(loggerContext.getScheduledExecutorService().
-                        scheduleAtFixedRate(rocTask, delay, delay, TimeUnit.MILLISECONDS));
+                loggerContext.fireConfigurationEvent(ConfigurationEvent.newConfigurationChangeDetectorRegisteredEvent(rocTask));
+                loggerContext.addScheduledFuture(loggerContext
+                        .getScheduledExecutorService()
+                        .scheduleAtFixedRate(rocTask, delay, delay, TimeUnit.MILLISECONDS));
             }
         }
     }

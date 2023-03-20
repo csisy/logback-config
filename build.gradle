@@ -8,10 +8,10 @@ sourceCompatibility = JavaVersion.VERSION_17
 targetCompatibility = JavaVersion.VERSION_17
 
 dependencies {
-	api "ch.qos.logback:logback-core:$projectVersion"
+	api "ch.qos.logback:logback-core:$logbackVersion"
 	api 'com.typesafe:config:1.4.2'
 
-	implementation "ch.qos.logback:logback-classic:$projectVersion"
+	implementation "ch.qos.logback:logback-classic:$logbackVersion"
 
 	testImplementation 'junit:junit:4.12'
 }
